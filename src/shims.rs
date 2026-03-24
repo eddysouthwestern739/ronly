@@ -4,55 +4,50 @@
 // APIs, not the filesystem, so a read-only mount doesn't
 // stop them. We intercept them via PATH:
 //
-// 1. During sandbox setup, ronly bind-mounts its own
-//    binary into /usr/lib/ronly/shims/ under each tool
-//    name (e.g., "docker"). This dir is prepended to
-//    $PATH.
+// 1. During sandbox setup, ronly copies itself into
+//    /tmp/.ronly-shims/ under each tool name (copy once,
+//    hard-link the rest). This dir is prepended to $PATH.
 //
 // 2. When bash runs "docker ps", it finds
-//    /usr/lib/ronly/shims/docker — which IS ronly.
+//    the shimmed "docker" binary — which IS ronly.
 //
 // 3. ronly's main() checks argv[0]. If it's "docker"
 //    (not "ronly"), it dispatches to shim_docker(),
 //    which either execs /usr/bin/docker for read-only
 //    subcommands or prints an error for write ops.
-//
-// Bind-mounts share the same inode as the original
-// binary — no copies, zero extra disk space.
 
 #![allow(dead_code, unused_imports)]
 use std::fs;
+use std::io;
 use std::path::Path;
-
-pub const SHIMS_DIR: &str = "/usr/lib/ronly/shims";
 
 const SHIMMED_TOOLS: &[&str] =
     &["docker", "kubectl"];
 
-/// Bind-mount our own binary into SHIMS_DIR under each
-/// tool name. `exe` must be the resolved path to our
-/// binary, obtained before any mounts changed.
+/// Copy our binary into `dir` under each tool name.
+/// First tool gets a full copy, rest are hard-linked.
 #[cfg(target_os = "linux")]
-pub fn install_shims(
-    exe: &std::path::Path,
+pub fn copy_shims(
+    exe: &Path,
+    dir: &str,
 ) -> crate::Result<()> {
-    use nix::mount::MsFlags;
-    let dir = Path::new(SHIMS_DIR);
+    let dir = Path::new(dir);
     fs::create_dir_all(dir)?;
-    for name in SHIMMED_TOOLS {
-        let dest = dir.join(name);
-        fs::write(&dest, b"")?;
-        nix::mount::mount(
-            Some(exe),
-            &dest,
-            None::<&str>,
-            MsFlags::MS_BIND,
-            None::<&str>,
-        )?;
+    let Some((first, rest)) = SHIMMED_TOOLS.split_first()
+    else {
+        return Ok(());
+    };
+    let perms = fs::metadata(exe)?.permissions();
+    let primary = dir.join(first);
+    let mut src = fs::File::open(exe)?;
+    let mut dst = fs::File::create(&primary)?;
+    io::copy(&mut src, &mut dst)?;
+    fs::set_permissions(&primary, perms)?;
+    for name in rest {
+        fs::hard_link(&primary, dir.join(name))?;
     }
     Ok(())
 }
-
 
 /// Check if we were invoked as a shim (argv[0] is a tool
 /// name, not "ronly"). If so, handle it and exit.
@@ -91,7 +86,10 @@ fn shim_docker() -> i32 {
                 _ => {
                     let s = sub.unwrap();
                     let s2 = sub2.unwrap_or("(none)");
-                    blocked("docker", &format!("{} {}", s, s2))
+                    blocked(
+                        "docker",
+                        &format!("{} {}", s, s2),
+                    )
                 }
             }
         }
@@ -172,7 +170,9 @@ fn exec_real(bin: &str) -> i32 {
     // Replace argv[0] with real binary path
     argv[0] = bin_c.as_ptr();
     argv.push(std::ptr::null());
-    unsafe { libc::execv(bin_c.as_ptr(), argv.as_ptr()) };
+    unsafe {
+        libc::execv(bin_c.as_ptr(), argv.as_ptr())
+    };
     // If we get here, exec failed
     eprintln!(
         "{}: command not found",

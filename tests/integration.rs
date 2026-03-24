@@ -2,7 +2,15 @@ use std::process::Command;
 
 fn ronly() -> Command {
     let bin = env!("CARGO_BIN_EXE_ronly");
-    Command::new(bin)
+    let mut cmd = Command::new(bin);
+    // RONLY_TEST_MODE=privileged forces --privileged flag
+    // so CI can test both paths
+    if std::env::var("RONLY_TEST_MODE").as_deref()
+        == Ok("privileged")
+    {
+        cmd.arg("--privileged");
+    }
+    cmd
 }
 
 fn ronly_run(args: &[&str]) -> std::process::Output {
@@ -25,77 +33,63 @@ fn stdout(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-fn stderr(out: &std::process::Output) -> String {
-    String::from_utf8_lossy(&out.stderr).to_string()
-}
-
 fn combined(out: &std::process::Output) -> String {
-    format!("{}{}", stdout(out), stderr(out))
-}
-
-fn skip_if_not_root() {
-    if !nix::unistd::geteuid().is_root() {
-        eprintln!("skipping: not root");
-        return;
-    }
+    let s = String::from_utf8_lossy(&out.stdout);
+    let e = String::from_utf8_lossy(&out.stderr);
+    format!("{s}{e}")
 }
 
 // --- read operations ---
 
 #[test]
 fn echo_hello() {
-    skip_if_not_root();
     let out = ronly_run(&["echo", "hello"]);
-    assert!(out.status.success());
+    assert!(out.status.success(), "{}", combined(&out));
     assert!(stdout(&out).contains("hello"));
 }
 
 #[test]
 fn cat_etc_hostname() {
-    skip_if_not_root();
     let out = ronly_run(&["cat", "/etc/hostname"]);
-    assert!(out.status.success());
+    assert!(out.status.success(), "{}", combined(&out));
     assert!(!stdout(&out).is_empty());
 }
 
 #[test]
 fn ls_root() {
-    skip_if_not_root();
     let out = ronly_run(&["ls", "/"]);
-    assert!(out.status.success());
+    assert!(out.status.success(), "{}", combined(&out));
 }
 
 #[test]
 fn ps_aux() {
-    skip_if_not_root();
     let out = ronly_sh("ps aux | head -3");
-    assert!(out.status.success());
+    assert!(out.status.success(), "{}", combined(&out));
 }
 
 // --- write operations blocked ---
 
 #[test]
 fn rm_blocked() {
-    skip_if_not_root();
     let out = ronly_sh("rm /etc/hostname 2>&1");
     assert!(!out.status.success());
     let text = combined(&out).to_lowercase();
     assert!(
         text.contains("read-only")
-            || text.contains("not permitted")
+            || text.contains("not permitted"),
+        "{}",
+        text
     );
 }
 
 #[test]
 fn touch_blocked() {
-    skip_if_not_root();
     let out = ronly_sh("touch /etc/ronly_test 2>&1");
     assert!(!out.status.success());
 }
 
 #[test]
 fn mkdir_blocked() {
-    skip_if_not_root();
     let out = ronly_sh("mkdir /etc/ronly_test 2>&1");
     assert!(!out.status.success());
 }
@@ -104,11 +98,10 @@ fn mkdir_blocked() {
 
 #[test]
 fn tmp_writable() {
-    skip_if_not_root();
     let out = ronly_sh(
         "echo test > /tmp/ronly_test && cat /tmp/ronly_test",
     );
-    assert!(out.status.success());
+    assert!(out.status.success(), "{}", combined(&out));
     assert!(stdout(&out).contains("test"));
 }
 
@@ -116,9 +109,8 @@ fn tmp_writable() {
 
 #[test]
 fn ps_shows_host_init() {
-    skip_if_not_root();
     let out = ronly_run(&["ps", "-p", "1", "-o", "comm="]);
-    assert!(out.status.success());
+    assert!(out.status.success(), "{}", combined(&out));
     let text = stdout(&out).to_lowercase();
     assert!(
         text.contains("init") || text.contains("systemd")
@@ -127,9 +119,8 @@ fn ps_shows_host_init() {
 
 #[test]
 fn own_pid_is_1() {
-    skip_if_not_root();
     let out = ronly_sh("echo $$");
-    assert!(out.status.success());
+    assert!(out.status.success(), "{}", combined(&out));
     assert_eq!(stdout(&out).trim(), "1");
 }
 
@@ -137,7 +128,6 @@ fn own_pid_is_1() {
 
 #[test]
 fn kill_blocked() {
-    skip_if_not_root();
     let out = ronly_sh("kill 1 2>&1");
     assert!(!out.status.success());
     assert!(combined(&out)
@@ -149,7 +139,6 @@ fn kill_blocked() {
 
 #[test]
 fn docker_exec_blocked() {
-    skip_if_not_root();
     let out = ronly_sh("docker exec foo bar 2>&1");
     assert!(!out.status.success());
     assert!(combined(&out).contains("blocked"));
@@ -157,7 +146,6 @@ fn docker_exec_blocked() {
 
 #[test]
 fn docker_stop_blocked() {
-    skip_if_not_root();
     let out = ronly_sh("docker stop foo 2>&1");
     assert!(!out.status.success());
     assert!(combined(&out).contains("blocked"));
@@ -165,7 +153,6 @@ fn docker_stop_blocked() {
 
 #[test]
 fn kubectl_delete_blocked() {
-    skip_if_not_root();
     let out = ronly_sh("kubectl delete pod foo 2>&1");
     assert!(!out.status.success());
     assert!(combined(&out).contains("blocked"));
@@ -173,7 +160,6 @@ fn kubectl_delete_blocked() {
 
 #[test]
 fn kubectl_apply_blocked() {
-    skip_if_not_root();
     let out = ronly_sh("kubectl apply -f foo 2>&1");
     assert!(!out.status.success());
     assert!(combined(&out).contains("blocked"));
@@ -183,21 +169,18 @@ fn kubectl_apply_blocked() {
 
 #[test]
 fn exit_0() {
-    skip_if_not_root();
     let out = ronly_run(&["true"]);
-    assert!(out.status.success());
+    assert!(out.status.success(), "{}", combined(&out));
 }
 
 #[test]
 fn exit_1() {
-    skip_if_not_root();
     let out = ronly_run(&["false"]);
     assert_eq!(out.status.code(), Some(1));
 }
 
 #[test]
 fn exit_42() {
-    skip_if_not_root();
     let out = ronly_sh("exit 42");
     assert_eq!(out.status.code(), Some(42));
 }

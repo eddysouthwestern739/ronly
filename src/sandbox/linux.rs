@@ -3,6 +3,7 @@ use nix::sched::CloneFlags;
 use nix::unistd::ForkResult;
 use std::collections::BTreeMap;
 use std::ffi::CString;
+use std::path::Path;
 
 use crate::shims;
 use crate::Args;
@@ -12,12 +13,28 @@ fn die(msg: &str) -> ! {
     unsafe { libc::_exit(1) }
 }
 
+const SHIMS_DIR: &str = "/tmp/.ronly-shims";
+
+fn mount_tmpfs(
+    target: &str,
+    size: &str,
+) -> crate::Result<()> {
+    nix::mount::mount(
+        Some("tmpfs"),
+        target,
+        Some("tmpfs"),
+        MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
+        Some(format!("size={}", size).as_str()),
+    )?;
+    Ok(())
+}
+
 fn setup_mounts(
     args: &Args,
-    self_exe: Option<&std::path::Path>,
+    has_shims: bool,
 ) -> crate::Result<()> {
-    // Create dirs before going read-only
-    std::fs::create_dir_all(shims::SHIMS_DIR).ok();
+    // Create writable mount points before going read-only.
+    // Silently fails in rootless mode (no real root).
     for p in &args.writable {
         std::fs::create_dir_all(p).ok();
     }
@@ -43,41 +60,24 @@ fn setup_mounts(
         None::<&str>,
     )?;
 
-    // Writable shims dir — mount BEFORE /tmp so the
-    // binary (which may live under /tmp) is still visible
-    // for bind-mounting.
-    nix::mount::mount(
-        Some("tmpfs"),
-        shims::SHIMS_DIR,
-        Some("tmpfs"),
-        MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-        Some("size=1m"),
-    )?;
+    // Writable /tmp
+    mount_tmpfs("/tmp", &args.tmpfs_size)?;
 
-    // Install shims via bind-mount while exe is visible
-    if let Some(exe) = self_exe {
-        shims::install_shims(exe)?;
+    // Copy shims into /tmp. /proc/self/exe resolves
+    // through the kernel's open-file reference, so it
+    // works even after mounts change.
+    if has_shims {
+        shims::copy_shims(
+            Path::new("/proc/self/exe"),
+            SHIMS_DIR,
+        )?;
     }
-
-    // Writable /tmp (may shadow the binary's location)
-    let size = &args.tmpfs_size;
-    nix::mount::mount(
-        Some("tmpfs"),
-        "/tmp",
-        Some("tmpfs"),
-        MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-        Some(format!("size={}", size).as_str()),
-    )?;
 
     // Additional writable paths
     for p in &args.writable {
-        let p = p.to_string_lossy();
-        nix::mount::mount(
-            Some("tmpfs"),
-            p.as_ref(),
-            Some("tmpfs"),
-            MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-            Some(format!("size={}", size).as_str()),
+        mount_tmpfs(
+            &p.to_string_lossy(),
+            &args.tmpfs_size,
         )?;
     }
 
@@ -165,18 +165,91 @@ fn setup_seccomp() -> crate::Result<()> {
 }
 
 pub fn run(args: Args) -> crate::Result<()> {
-    // Resolve exe path before mounts change the FS
-    let self_exe = if !args.no_shims {
-        Some(std::fs::read_link("/proc/self/exe")?)
-    } else {
-        None
+    use crate::Mode;
+
+    let has_shims = !args.no_shims;
+    let real_uid = unsafe { libc::getuid() };
+    let real_gid = unsafe { libc::getgid() };
+
+    let rootless = match args.mode {
+        Mode::Rootless => {
+            if let Err(_) = nix::sched::unshare(
+                CloneFlags::CLONE_NEWUSER
+                    | CloneFlags::CLONE_NEWNS
+                    | CloneFlags::CLONE_NEWPID,
+            ) {
+                eprintln!(
+                    "ronly: user namespaces unavailable, \
+                     try --privileged as root"
+                );
+                std::process::exit(1);
+            }
+            true
+        }
+        Mode::Privileged => {
+            if let Err(_) = nix::sched::unshare(
+                CloneFlags::CLONE_NEWNS
+                    | CloneFlags::CLONE_NEWPID,
+            ) {
+                eprintln!(
+                    "ronly: --privileged requires root \
+                     (CAP_SYS_ADMIN), try --rootless"
+                );
+                std::process::exit(1);
+            }
+            false
+        }
+        Mode::Auto => {
+            match nix::sched::unshare(
+                CloneFlags::CLONE_NEWUSER
+                    | CloneFlags::CLONE_NEWNS
+                    | CloneFlags::CLONE_NEWPID,
+            ) {
+                Ok(()) => true,
+                Err(_) => {
+                    if let Err(_) = nix::sched::unshare(
+                        CloneFlags::CLONE_NEWNS
+                            | CloneFlags::CLONE_NEWPID,
+                    ) {
+                        eprintln!(
+                            "ronly: needs user namespaces \
+                             or root, see --rootless \
+                             and --privileged"
+                        );
+                        std::process::exit(1);
+                    }
+                    false
+                }
+            }
+        }
     };
 
-    if let Err(_) = nix::sched::unshare(
-        CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID,
-    ) {
-        eprintln!("ronly: requires root (or CAP_SYS_ADMIN)");
-        std::process::exit(1);
+    if rootless {
+        eprintln!("ronly: rootless (user namespaces)");
+        let map_ok = std::fs::write(
+            "/proc/self/setgroups",
+            "deny",
+        )
+        .and_then(|_| {
+            std::fs::write(
+                "/proc/self/uid_map",
+                format!("0 {} 1\n", real_uid),
+            )
+        })
+        .and_then(|_| {
+            std::fs::write(
+                "/proc/self/gid_map",
+                format!("0 {} 1\n", real_gid),
+            )
+        });
+        if let Err(e) = map_ok {
+            eprintln!(
+                "ronly: uid/gid mapping failed: {e}"
+            );
+            std::process::exit(1);
+        }
+    } else {
+        eprintln!("ronly: privileged (root)");
     }
 
     match unsafe { nix::unistd::fork()? } {
@@ -192,23 +265,17 @@ pub fn run(args: Args) -> crate::Result<()> {
             std::process::exit(code);
         }
         ForkResult::Child => {
-            child_main(args, self_exe);
+            child_main(args, has_shims);
         }
     }
 }
 
-fn child_main(
-    args: Args,
-    self_exe: Option<std::path::PathBuf>,
-) -> ! {
-    if let Err(e) =
-        setup_mounts(&args, self_exe.as_deref())
-    {
+fn child_main(args: Args, has_shims: bool) -> ! {
+    if let Err(e) = setup_mounts(&args, has_shims) {
         die(&format!("ronly: mounts: {}", e));
     }
 
-    if self_exe.is_some() {
-        // PATH: extra shims > built-in shims > system
+    if has_shims {
         let sys_path =
             std::env::var("PATH").unwrap_or_default();
         let mut parts: Vec<String> = args
@@ -216,7 +283,7 @@ fn child_main(
             .iter()
             .map(|d| d.to_string_lossy().into_owned())
             .collect();
-        parts.push(shims::SHIMS_DIR.to_string());
+        parts.push(SHIMS_DIR.to_string());
         parts.push(sys_path);
         std::env::set_var("PATH", parts.join(":"));
     }
