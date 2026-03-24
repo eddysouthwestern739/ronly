@@ -30,15 +30,14 @@ ronly -- kubectl get pods    # same, single command mode
 The sequence:
 
 1. `ronly` is invoked
-2. Creates Linux namespaces (mount, PID)
+2. Creates a mount namespace (user namespace for rootless, or privileged)
 3. Remounts the filesystem read-only
 4. Mounts a small writable tmpfs at `/tmp`
-5. Bind-mounts host `/proc` read-only
-6. Prepends shim directory to `$PATH`
-7. Loads seccomp-bpf filter
-8. Execs the real shell
+5. Copies shims into `/tmp`, prepends to `$PATH`
+6. Loads seccomp-bpf filter (blocks kill, unlink, mount, etc.)
+7. Execs the real shell
 
-After step 8, `ronly` is gone — replaced by the shell process via `execve`. It doesn't interpret commands, doesn't sit in the middle, doesn't add latency. It just builds the cage and then gets out of the way.
+After step 7, `ronly` is gone — replaced by the shell process via `execve`. It doesn't interpret commands, doesn't sit in the middle, doesn't add latency. It just builds the cage and then gets out of the way.
 
 ## How It Composes
 
@@ -79,10 +78,10 @@ const proc = spawn("ronly", ["bash", "-c", command]);
 
 ### Layer 1: Read-Only Filesystem (Mount Namespace)
 
-`ronly` creates a new mount namespace and remounts the root filesystem read-only:
+`ronly` creates a new mount namespace and remounts the root filesystem read-only (non-recursive, so `/proc` stays functional):
 
 ```
-unshare(CLONE_NEWNS)
+unshare(CLONE_NEWNS)       # or CLONE_NEWUSER | CLONE_NEWNS for rootless
 mount --bind -o ro,remount / /
 ```
 
@@ -94,20 +93,9 @@ A small tmpfs is mounted at `/tmp` (default 64MB, configurable) so the agent has
 mount -t tmpfs -o size=64M tmpfs /tmp
 ```
 
-### Layer 2: Process Isolation (PID Namespace)
+**Why no PID namespace:** The original design used `CLONE_NEWPID` to isolate processes, but this requires remounting `/proc` as a fresh procfs — which only shows processes inside the sandbox, breaking the core use case of `top` and `ps` showing host processes. In containers, `/proc` remounts are also blocked by many runtimes. Instead, `kill` is blocked by seccomp, which is sufficient.
 
-`ronly` creates a new PID namespace but bind-mounts the **host's `/proc`** read-only into the sandbox.
-
-What this gives you:
-
-- `top`, `htop`, `ps aux` show real host processes with real PIDs, CPU, memory usage
-- `cat /proc/<pid>/status` works for any host process
-- `kill <pid>` fails — the target PID doesn't exist in the agent's PID namespace
-- `kill` on processes the agent itself spawned (within the sandbox) works normally
-
-The agent sees everything. It can signal nothing outside its own session.
-
-### Layer 3: Syscall Filtering (seccomp-bpf)
+### Layer 2: Syscall Filtering (seccomp-bpf)
 
 A seccomp-bpf profile blocks destructive syscalls as a defense-in-depth backstop.
 
@@ -130,11 +118,20 @@ A seccomp-bpf profile blocks destructive syscalls as a defense-in-depth backstop
 | `perf_event_open` | Needed for `perf top`, `perf stat`. Requires `CAP_PERFMON`. Can observe, never modify. |
 | `ptrace` (read ops only) | Enables read-only `strace`. Write operations filtered out. |
 
-The seccomp filter is the backstop — most operations are already blocked by the read-only filesystem and PID namespace. seccomp catches the things that slip through the cracks (like `kill`, which doesn't touch the filesystem).
+The seccomp filter complements the read-only filesystem. The filesystem blocks file modifications; seccomp blocks operations that don't touch the filesystem (like `kill`, which works via syscall, not file I/O).
+
+### Rootless Operation
+
+`ronly` supports two modes:
+
+- **Rootless (default):** Uses `CLONE_NEWUSER` to create a user namespace. No root required. Works on any kernel 4.6+ with unprivileged user namespaces enabled (Debian 11+, RHEL 8+, Ubuntu 16.04+). Note: Ubuntu 24.04's AppArmor restricts unprivileged userns by default — requires `kernel.apparmor_restrict_unprivileged_userns=0` or an AppArmor profile.
+- **Privileged:** Uses `CLONE_NEWNS` directly. Requires root or `CAP_SYS_ADMIN`. Needed in environments that disable unprivileged user namespaces (hardened servers, some container runtimes).
+
+By default, ronly tries rootless first and falls back to privileged. Use `--rootless` or `--privileged` to force a mode. The active mode is printed to stderr.
 
 ### Interaction of Layers
 
-The layers are redundant by design. To delete a file, an agent would need to bypass the read-only mount (layer 1) AND the seccomp filter blocking `unlink` (layer 3). To kill a host process, it would need to bypass the PID namespace (layer 2) AND the seccomp filter blocking `kill` (layer 3). No single layer failing compromises the system.
+The layers are redundant by design. To delete a file, an agent would need to bypass the read-only mount (layer 1) AND the seccomp filter blocking `unlink` (layer 2). To kill a host process, the agent would need to bypass the seccomp filter blocking `kill`. No single layer failing compromises the system.
 
 ## Tool Shims
 
@@ -319,11 +316,10 @@ The shims are a **usability layer**, not a security boundary. The real security 
 ### Scope
 
 **Build:**
-- Namespace setup (mount, PID) with read-only root and writable `/tmp`
-- Host `/proc` bind-mounted read-only
-- seccomp-bpf filter (destructive syscalls blocked, `CAP_PERFMON` allowed)
-- Shims for `docker` and `kubectl`
-- `--audit` flag for command logging
+- Mount namespace with read-only root and writable `/tmp`
+- Rootless via user namespaces, privileged fallback
+- seccomp-bpf filter (kill, unlink, mount, etc. blocked)
+- Shims for `docker` and `kubectl` (copy + hard-link into /tmp)
 - Single command mode (`ronly -- command`)
 - Interactive mode (`ronly` / `ronly bash` / `ronly zsh`)
 
@@ -340,9 +336,9 @@ The shims are a **usability layer**, not a security boundary. The real security 
 Rust. Estimated ~500-800 lines of actual logic.
 
 **Crates:**
-- `nix` — namespace and syscall wrappers (`unshare`, `mount`, `execve`)
+- `nix` — namespace and mount wrappers (`unshare`, `mount`)
 - `seccompiler` — seccomp-bpf filter construction
-- `clap` — CLI argument parsing
+- `lexopt` — minimal CLI argument parsing
 
 Note: no async runtime needed. `ronly` does synchronous setup and then execs. No SSH server, no event loop, no tokio.
 
@@ -355,7 +351,7 @@ cargo build --release
 **Install:**
 ```
 cp target/release/ronly /usr/local/bin/ronly
-cp shims/* /usr/lib/ronly/shims/
+# or: cargo install ronly
 ```
 
 ### What the Implementation Looks Like
@@ -366,49 +362,32 @@ Pseudocode for the core:
 fn main() {
     let args = parse_args();
 
-    // 1. Create new mount and PID namespaces
-    unshare(CLONE_NEWNS | CLONE_NEWPID)?;
+    // 1. Create mount namespace (try rootless first)
+    //    Rootless: CLONE_NEWUSER | CLONE_NEWNS
+    //    Privileged: CLONE_NEWNS (requires root)
+    unshare(namespace_flags)?;
 
-    // Must fork after CLONE_NEWPID — child becomes PID 1 in new namespace
-    match fork()? {
-        Parent(child_pid) => {
-            // Wait for child
-            waitpid(child_pid)?;
-        }
-        Child => {
-            // 2. Remount root read-only
-            mount_readonly("/")?;
-
-            // 3. Mount tmpfs at /tmp
-            mount_tmpfs("/tmp", &args.tmpfs_size)?;
-
-            // 4. Additional writable paths as tmpfs overlays
-            for path in &args.writable_paths {
-                mount_tmpfs(path, &args.tmpfs_size)?;
-            }
-
-            // 5. Bind-mount host /proc read-only
-            mount_proc_readonly()?;
-
-            // 6. Prepend shims to PATH
-            prepend_shims_to_path(&args.extra_shims)?;
-
-            // 7. Set up audit logging if requested
-            if args.audit {
-                setup_audit_hooks()?;
-            }
-
-            // 8. Load seccomp filter (must be last before exec)
-            load_seccomp_filter(&args.allowed_caps)?;
-
-            // 9. Exec the shell (ronly process is replaced)
-            let shell = args.shell.unwrap_or(env::var("SHELL").unwrap_or("/bin/bash"));
-            match &args.command {
-                Some(cmd) => exec_command(&shell, cmd),
-                None => exec_interactive(&shell),
-            }
-        }
+    // 2. If rootless, set up uid/gid mapping
+    if rootless {
+        write("/proc/self/setgroups", "deny");
+        write("/proc/self/uid_map", "0 <real_uid> 1");
+        write("/proc/self/gid_map", "0 <real_gid> 1");
     }
+
+    // 3. Remount root read-only (non-recursive)
+    mount_readonly("/")?;
+
+    // 4. Mount tmpfs at /tmp
+    mount_tmpfs("/tmp", &args.tmpfs_size)?;
+
+    // 5. Copy shims into /tmp, prepend to PATH
+    copy_shims("/proc/self/exe", "/tmp/.ronly-shims")?;
+
+    // 6. Load seccomp filter (must be last before exec)
+    load_seccomp_filter()?;
+
+    // 7. Exec the shell (ronly is replaced)
+    execvp(shell, args)?;
 }
 ```
 

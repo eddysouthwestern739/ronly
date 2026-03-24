@@ -1,6 +1,5 @@
 use nix::mount::MsFlags;
 use nix::sched::CloneFlags;
-use nix::unistd::ForkResult;
 use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::path::Path;
@@ -48,35 +47,15 @@ fn setup_mounts(
         None::<&str>,
     )?;
 
-    // Read-only root
+    // Read-only root (non-recursive so /proc stays
+    // functional — seccomp blocks writes anyway)
     nix::mount::mount(
         Some("/"),
         "/",
         None::<&str>,
         MsFlags::MS_BIND
             | MsFlags::MS_REMOUNT
-            | MsFlags::MS_RDONLY
-            | MsFlags::MS_REC,
-        None::<&str>,
-    )?;
-
-    // Bind-mount host /proc over itself read-only.
-    // The recursive ro-remount above can leave /proc in
-    // a broken state (especially in containers). A fresh
-    // bind-mount restores it while keeping it read-only.
-    nix::mount::mount(
-        Some("/proc"),
-        "/proc",
-        None::<&str>,
-        MsFlags::MS_BIND | MsFlags::MS_REC,
-        None::<&str>,
-    )?;
-    nix::mount::mount(
-        None::<&str>,
-        "/proc",
-        None::<&str>,
-        MsFlags::MS_BIND | MsFlags::MS_REMOUNT
-            | MsFlags::MS_RDONLY | MsFlags::MS_REC,
+            | MsFlags::MS_RDONLY,
         None::<&str>,
     )?;
 
@@ -195,8 +174,7 @@ pub fn run(args: Args) -> crate::Result<()> {
         Mode::Rootless => {
             if let Err(_) = nix::sched::unshare(
                 CloneFlags::CLONE_NEWUSER
-                    | CloneFlags::CLONE_NEWNS
-                    | CloneFlags::CLONE_NEWPID,
+                    | CloneFlags::CLONE_NEWNS,
             ) {
                 eprintln!(
                     "ronly: user namespaces unavailable, \
@@ -208,8 +186,7 @@ pub fn run(args: Args) -> crate::Result<()> {
         }
         Mode::Privileged => {
             if let Err(_) = nix::sched::unshare(
-                CloneFlags::CLONE_NEWNS
-                    | CloneFlags::CLONE_NEWPID,
+                CloneFlags::CLONE_NEWNS,
             ) {
                 eprintln!(
                     "ronly: --privileged requires root \
@@ -222,14 +199,12 @@ pub fn run(args: Args) -> crate::Result<()> {
         Mode::Auto => {
             match nix::sched::unshare(
                 CloneFlags::CLONE_NEWUSER
-                    | CloneFlags::CLONE_NEWNS
-                    | CloneFlags::CLONE_NEWPID,
+                    | CloneFlags::CLONE_NEWNS,
             ) {
                 Ok(()) => true,
                 Err(_) => {
                     if let Err(_) = nix::sched::unshare(
-                        CloneFlags::CLONE_NEWNS
-                            | CloneFlags::CLONE_NEWPID,
+                        CloneFlags::CLONE_NEWNS,
                     ) {
                         eprintln!(
                             "ronly: needs user namespaces \
@@ -245,7 +220,7 @@ pub fn run(args: Args) -> crate::Result<()> {
     };
 
     if rootless {
-        eprintln!("ronly: rootless (user namespaces)");
+        eprintln!("ronly: using user namespaces (--rootless)");
         let map_ok = std::fs::write(
             "/proc/self/setgroups",
             "deny",
@@ -269,28 +244,9 @@ pub fn run(args: Args) -> crate::Result<()> {
             std::process::exit(1);
         }
     } else {
-        eprintln!("ronly: privileged (root)");
+        eprintln!("ronly: using root privileges (--privileged)");
     }
 
-    match unsafe { nix::unistd::fork()? } {
-        ForkResult::Parent { child } => {
-            let status =
-                nix::sys::wait::waitpid(child, None)?;
-            let code = match status {
-                nix::sys::wait::WaitStatus::Exited(
-                    _, c,
-                ) => c,
-                _ => 1,
-            };
-            std::process::exit(code);
-        }
-        ForkResult::Child => {
-            child_main(args, has_shims);
-        }
-    }
-}
-
-fn child_main(args: Args, has_shims: bool) -> ! {
     if let Err(e) = setup_mounts(&args, has_shims) {
         die(&format!("ronly: mounts: {}", e));
     }

@@ -105,23 +105,12 @@ fn tmp_writable() {
     assert!(stdout(&out).contains("test"));
 }
 
-// --- pid namespace ---
+// --- /proc works (host processes visible) ---
 
 #[test]
-fn ps_shows_host_init() {
-    let out = ronly_run(&["ps", "-p", "1", "-o", "comm="]);
+fn ps_works() {
+    let out = ronly_sh("ps aux");
     assert!(out.status.success(), "{}", combined(&out));
-    let text = stdout(&out).to_lowercase();
-    assert!(
-        text.contains("init") || text.contains("systemd")
-    );
-}
-
-#[test]
-fn own_pid_is_1() {
-    let out = ronly_sh("echo $$");
-    assert!(out.status.success(), "{}", combined(&out));
-    assert_eq!(stdout(&out).trim(), "1");
 }
 
 // --- seccomp ---

@@ -8,7 +8,7 @@ kernel 4.6+ (Debian 11+, RHEL 8+, Ubuntu 16.04+). Falls
 back to privileged mode if user namespaces are unavailable.
 
   $ kubectl exec -it debug-pod -- ronly
-  ronly: rootless (user namespaces)
+  ronly: using user namespaces (--rootless)
   root@debug-pod:~# top -bn1 | head -5
   top - 14:23:01 up 42 days, load average: 2.31, 1.87
   Tasks: 312 total,   1 running, 311 sleeping
@@ -33,15 +33,12 @@ HOW IT WORKS
      bind-mounted read-only. Writes fail with EROFS.
      Writable tmpfs at /tmp for scratch space.
 
-  2. PID namespace — host /proc mounted read-only. ps and
-     top show real host processes. kill fails because
-     target PIDs don't exist in the agent's namespace.
-
-  3. seccomp-bpf — blocks kill, unlink, rename, truncate,
+  2. seccomp-bpf — blocks kill, unlink, rename, truncate,
      mount, reboot. ptrace write ops blocked but read ops
-     allowed (so strace works). Defense in depth.
+     allowed (so strace works). ps, top, and /proc show
+     real host processes — kill is blocked by seccomp.
 
-  4. Tool shims — ronly copies itself into /tmp under
+  3. Tool shims — ronly copies itself into /tmp under
      names like "docker" and "kubectl" (one copy, rest are
      hard links) and prepends that dir to PATH. The shell
      finds the shim, ronly checks argv[0], and either execs
@@ -67,8 +64,12 @@ With no arguments, execs $SHELL (or /bin/bash).
   --help               show this help
   --version            show version
 
-By default, ronly tries rootless first and falls back to
-privileged. It prints which mode it's using to stderr.
+Two modes exist because not all environments support both.
+Rootless works on most modern kernels without root, but
+some hardened systems and container runtimes disable user
+namespaces. Privileged mode covers those cases. By default
+ronly tries rootless first and falls back to privileged.
+It prints which mode it's using to stderr.
 
 BUILT-IN SHIMS
 
