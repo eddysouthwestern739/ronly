@@ -1,5 +1,7 @@
 ronly — read-only sandbox for untrustworthy agents
 
+Linux only.
+
 Drop into a shell session where everything looks normal but
 destructive operations are blocked at the kernel level.
 Requires root (or CAP_SYS_ADMIN) for namespace setup.
