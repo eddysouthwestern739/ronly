@@ -1,10 +1,8 @@
 # ronly
 
-Read-only sandbox for shells. Drop into a bash/zsh/fish session where
-everything looks normal — `top`, `cat /var/log/syslog`, `kubectl get pods`
+Read-only sandbox for untrustworthy agents. Drop into a bash/zsh/fish session
+where everything looks normal — `top`, `cat /var/log/syslog`, `kubectl get pods`
 all work — but destructive operations are blocked at the kernel level.
-
-Not a shell. A jail that runs your shell inside it.
 
 ```
 ronly                        # launch $SHELL in read-only sandbox
@@ -15,8 +13,8 @@ ronly -- top                 # same
 
 ## How it works
 
-`ronly` creates a sandbox, then execs your shell. After exec, ronly is
-gone — replaced by the shell process. No overhead, no interception.
+`ronly` creates a sandbox, then execs your shell or command. After exec, ronly
+is gone — replaced by the shell process. No overhead, no interception.
 
 1. **Read-only filesystem** — Mount namespace with root bind-mounted
    read-only. Writes fail with `EROFS`. Writable tmpfs at `/tmp` for
@@ -37,15 +35,6 @@ gone — replaced by the shell process. No overhead, no interception.
    execs the real `/usr/bin/docker` (for read-only subcommands)
    or prints an error and exits (for write subcommands). No shell
    scripts, no extra binaries, zero disk overhead.
-
-## Install
-
-```
-cargo build --release
-cp target/release/ronly /usr/local/bin/ronly
-```
-
-Requires Linux. Single binary, zero runtime dependencies.
 
 ## Usage
 
@@ -139,7 +128,3 @@ same inode). Zero disk overhead.
 Everything not listed is blocked by default.
 
 Custom shims can be added with `--extra-shims DIR`.
-
-## License
-
-MIT

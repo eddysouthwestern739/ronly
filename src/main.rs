@@ -9,6 +9,7 @@ mod shims;
 #[command(
     name = "ronly",
     about = "Read-only sandbox for shells",
+    long_about = include_str!("../README.md"),
     version
 )]
 pub struct Args {

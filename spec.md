@@ -1,4 +1,6 @@
-# ronly — Read-Only Box
+# ronly — Read-Only Sandbox
+
+linux only
 
 ## Problem
 
@@ -442,3 +444,8 @@ fn main() {
 **Agent framework integration.** Provide libraries/examples for using ronly with popular agent frameworks — OpenClaw, agentd, Claude Code, OpenAI Codex.
 
 **Managed offering.** A hosted version where you connect infrastructure and get ronly-protected access without deploying anything yourself.
+
+**Secret protection.** Defense-in-depth measures to reduce accidental secret exposure. None of these are secure against a determined adversary — they raise the bar for accidental leaks.
+- `--mask` flag and auto-masking of common secret paths (`~/.ssh/*`, `~/.aws/credentials`, `~/.config/gcloud/`, etc.) — bind-mount `/dev/null` over them
+- Env var scrubbing — blocklist of known secret env vars (`AWS_SECRET_ACCESS_KEY`, `DATABASE_URL`, etc.), stripped before exec
+- Output scrubbing — aho-corasick redaction of known secret values in stdout/stderr, for agents that might echo secrets in logs
