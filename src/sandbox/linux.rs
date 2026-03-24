@@ -172,9 +172,12 @@ pub fn run(args: Args) -> crate::Result<()> {
         None
     };
 
-    nix::sched::unshare(
+    if let Err(_) = nix::sched::unshare(
         CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID,
-    )?;
+    ) {
+        eprintln!("ronly: requires root (or CAP_SYS_ADMIN)");
+        std::process::exit(1);
+    }
 
     match unsafe { nix::unistd::fork()? } {
         ForkResult::Parent { child } => {

@@ -1,7 +1,11 @@
 [package]
 name = "ronly"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
+authors = ["Ryan Dahl <ry@tinyclouds.org>"]
+description = "Read-only sandbox for untrustworthy agents"
+license = "MIT"
+repository = "https://github.com/denoland/ronly"
 
 [dependencies]
 lexopt = "0.3"
