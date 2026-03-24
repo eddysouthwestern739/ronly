@@ -5,6 +5,7 @@ mod linux;
 pub use linux::run;
 
 #[cfg(not(target_os = "linux"))]
-pub fn run(_args: crate::Args) -> anyhow::Result<()> {
-    anyhow::bail!("ronly only runs on Linux")
+pub fn run(_args: crate::Args) -> crate::Result<()> {
+    eprintln!("ronly only runs on Linux");
+    std::process::exit(1);
 }

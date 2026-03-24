@@ -21,8 +21,6 @@
 // binary — no copies, zero extra disk space.
 
 #![allow(dead_code)]
-use anyhow::Result;
-use std::fs;
 use std::path::Path;
 
 pub const SHIMS_DIR: &str = "/usr/lib/ronly/shims";
@@ -36,7 +34,7 @@ const SHIMMED_TOOLS: &[&str] =
 #[cfg(target_os = "linux")]
 pub fn install_shims(
     exe: &std::path::Path,
-) -> Result<()> {
+) -> crate::Result<()> {
     use nix::mount::MsFlags;
     let dir = Path::new(SHIMS_DIR);
     fs::create_dir_all(dir)?;

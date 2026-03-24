@@ -1,0 +1,79 @@
+ronly — read-only sandbox for untrustworthy agents
+
+Drop into a shell session where everything looks normal but
+destructive operations are blocked at the kernel level.
+Requires root (or CAP_SYS_ADMIN) for namespace setup.
+
+  $ kubectl exec -it debug-pod -- ronly
+  root@debug-pod:~# top -bn1 | head -5
+  top - 14:23:01 up 42 days, load average: 2.31, 1.87
+  Tasks: 312 total,   1 running, 311 sleeping
+  %Cpu(s):  8.3 us,  2.1 sy,  0.0 ni, 89.1 id
+  MiB Mem:  32168.0 total,  12042.3 free
+
+  root@debug-pod:~# cat /var/log/syslog | grep error
+  Mar 24 09:14:02 prod payment-svc: connection error
+
+  root@debug-pod:~# rm /etc/hosts
+  rm: cannot remove '/etc/hosts': Read-only file system
+
+  root@debug-pod:~# kill 1
+  bash: kill: (1) - Operation not permitted
+
+  root@debug-pod:~# docker run nginx
+  ronly: docker run is blocked (read-only session)
+
+HOW IT WORKS
+
+  1. Read-only filesystem — mount namespace with root
+     bind-mounted read-only. Writes fail with EROFS.
+     Writable tmpfs at /tmp for scratch space.
+
+  2. PID namespace — host /proc mounted read-only. ps and
+     top show real host processes. kill fails because
+     target PIDs don't exist in the agent's namespace.
+
+  3. seccomp-bpf — blocks kill, unlink, rename, truncate,
+     mount, reboot. ptrace write ops blocked but read ops
+     allowed (so strace works). Defense in depth.
+
+  4. Tool shims — ronly is bind-mounted into a shims dir
+     on PATH under names like "docker" and "kubectl". The
+     shell finds the shim, ronly checks argv[0], and either
+     execs the real binary (read-only subcommands) or exits
+     with an error (write subcommands). No shell scripts,
+     no extra binaries, zero disk overhead.
+
+Network is not restricted. The agent can make outbound
+connections. Layer your own network policy if exfiltration
+is a concern.
+
+USAGE
+
+  ronly [OPTIONS] [COMMAND...]
+
+With no arguments, execs $SHELL (or /bin/bash).
+
+  --tmpfs-size SIZE    writable /tmp size (default: 64M)
+  --extra-shims DIR    additional shim directory
+  --no-shims           disable all shims
+  --writable PATH      empty writable tmpfs at PATH
+  --help               show this help
+  --version            show version
+
+BUILT-IN SHIMS
+
+Some tools talk to sockets/APIs rather than the filesystem,
+so a read-only mount alone doesn't stop them.
+
+  docker — ps, logs, inspect, stats, top, images, info,
+    version, events, diff, network ls/inspect,
+    volume ls/inspect
+
+  kubectl — get, describe, logs, top, explain, version,
+    cluster-info, api-resources, api-versions,
+    config view/current-context/get-contexts,
+    auth can-i/whoami
+
+Everything not listed is blocked. Add custom shims with
+--extra-shims DIR.

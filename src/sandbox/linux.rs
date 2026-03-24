@@ -1,4 +1,3 @@
-use anyhow::Result;
 use nix::mount::MsFlags;
 use nix::sched::CloneFlags;
 use nix::unistd::ForkResult;
@@ -16,7 +15,7 @@ fn die(msg: &str) -> ! {
 fn setup_mounts(
     args: &Args,
     self_exe: Option<&std::path::Path>,
-) -> Result<()> {
+) -> crate::Result<()> {
     // Create dirs before going read-only
     std::fs::create_dir_all(shims::SHIMS_DIR).ok();
     for p in &args.writable {
@@ -85,7 +84,7 @@ fn setup_mounts(
     Ok(())
 }
 
-fn setup_seccomp() -> Result<()> {
+fn setup_seccomp() -> crate::Result<()> {
     use seccompiler::SeccompAction;
     use seccompiler::SeccompCmpArgLen;
     use seccompiler::SeccompCmpOp;
@@ -150,7 +149,7 @@ fn setup_seccomp() -> Result<()> {
 
     let arch =
         std::env::consts::ARCH.try_into().map_err(|e| {
-            anyhow::anyhow!("unsupported arch: {}", e)
+            format!("unsupported arch: {}", e)
         })?;
 
     let filter = SeccompFilter::new(
@@ -165,7 +164,7 @@ fn setup_seccomp() -> Result<()> {
     Ok(())
 }
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(args: Args) -> crate::Result<()> {
     // Resolve exe path before mounts change the FS
     let self_exe = if !args.no_shims {
         Some(std::fs::read_link("/proc/self/exe")?)
@@ -223,28 +222,18 @@ fn child_main(
         die(&format!("ronly: seccomp: {}", e));
     }
 
-    // Determine shell
-    let shell = args.shell.unwrap_or_else(|| {
-        std::env::var("SHELL")
-            .unwrap_or_else(|_| "/bin/bash".to_string())
-    });
-
-    // Exec
-    if args.command.is_empty() {
-        // Interactive shell
-        let sh = CString::new(shell).unwrap();
-        nix::unistd::execvp(&sh, &[&sh]).unwrap();
+    // Default to $SHELL or /bin/bash
+    let command = if args.command.is_empty() {
+        vec![std::env::var("SHELL")
+            .unwrap_or_else(|_| "/bin/bash".into())]
     } else {
-        // Command mode: exec the command directly
-        let argv: Vec<CString> = args
-            .command
-            .iter()
-            .map(|s| CString::new(s.as_str()).unwrap())
-            .collect();
-        let argv_refs: Vec<&CString> =
-            argv.iter().collect();
-        nix::unistd::execvp(&argv[0], &argv_refs)
-            .unwrap();
-    }
+        args.command
+    };
+    let argv: Vec<CString> = command
+        .iter()
+        .map(|s| CString::new(s.as_str()).unwrap())
+        .collect();
+    let argv_refs: Vec<&CString> = argv.iter().collect();
+    nix::unistd::execvp(&argv[0], &argv_refs).unwrap();
     unreachable!()
 }

@@ -1,50 +1,82 @@
-use anyhow::Result;
-use clap::Parser;
 use std::path::PathBuf;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 mod sandbox;
 mod shims;
 
-#[derive(Parser)]
-#[command(
-    name = "ronly",
-    about = "Read-only sandbox for shells",
-    long_about = include_str!("../README.md"),
-    version
-)]
 pub struct Args {
-    /// Shell to exec (default: $SHELL or /bin/bash)
-    pub shell: Option<String>,
-
-    /// Run a single command instead of interactive shell
-    #[arg(last = true)]
     pub command: Vec<String>,
-
-    /// Size of writable /tmp (e.g. 64M, 1G)
-    #[arg(long, default_value = "64M")]
     pub tmpfs_size: String,
-
-    /// Additional shim directory
-    #[arg(long)]
     pub extra_shims: Vec<PathBuf>,
-
-    /// Disable all shims (kernel isolation only)
-    #[arg(long)]
     pub no_shims: bool,
-
-    /// Additional writable tmpfs overlay
-    #[arg(long)]
     pub writable: Vec<PathBuf>,
 }
 
-fn main() -> Result<()> {
-    // Shim dispatch: if argv[0] is "docker", "kubectl",
-    // etc. (because we were invoked via a bind-mount in
-    // the shims dir), handle it and exit. See shims.rs.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const HELP: &str = include_str!("../README");
+
+fn parse_args() -> Args {
+    use lexopt::prelude::*;
+
+    let mut args = Args {
+        command: vec![],
+        tmpfs_size: "64M".into(),
+        extra_shims: vec![],
+        no_shims: false,
+        writable: vec![],
+    };
+
+    let mut parser = lexopt::Parser::from_env();
+    while let Some(arg) = parser.next().unwrap() {
+        match arg {
+            Long("help") => {
+                print!("{HELP}");
+                std::process::exit(0);
+            }
+            Long("version") => {
+                println!("ronly {VERSION}");
+                std::process::exit(0);
+            }
+            Long("tmpfs-size") => {
+                args.tmpfs_size =
+                    parser.value().unwrap().into_string().unwrap();
+            }
+            Long("extra-shims") => {
+                args.extra_shims.push(
+                    parser.value().unwrap().into_string().unwrap()
+                        .into(),
+                );
+            }
+            Long("no-shims") => {
+                args.no_shims = true;
+            }
+            Long("writable") => {
+                args.writable.push(
+                    parser.value().unwrap().into_string().unwrap()
+                        .into(),
+                );
+            }
+            Value(val) => {
+                args.command.push(
+                    val.into_string().unwrap(),
+                );
+            }
+            _ => {
+                eprintln!(
+                    "unknown argument, try --help"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+    args
+}
+
+fn main() -> crate::Result<()> {
     if let Some(code) = shims::maybe_run_as_shim() {
         std::process::exit(code);
     }
-
-    let args = Args::parse();
+    let args = parse_args();
     sandbox::run(args)
 }
