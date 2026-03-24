@@ -8,6 +8,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Disable AppArmor userns restriction
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Test (rootless)
         run: cargo test --release
 
