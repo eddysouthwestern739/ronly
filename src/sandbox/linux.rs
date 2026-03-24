@@ -60,6 +60,26 @@ fn setup_mounts(
         None::<&str>,
     )?;
 
+    // Bind-mount host /proc over itself read-only.
+    // The recursive ro-remount above can leave /proc in
+    // a broken state (especially in containers). A fresh
+    // bind-mount restores it while keeping it read-only.
+    nix::mount::mount(
+        Some("/proc"),
+        "/proc",
+        None::<&str>,
+        MsFlags::MS_BIND | MsFlags::MS_REC,
+        None::<&str>,
+    )?;
+    nix::mount::mount(
+        None::<&str>,
+        "/proc",
+        None::<&str>,
+        MsFlags::MS_BIND | MsFlags::MS_REMOUNT
+            | MsFlags::MS_RDONLY | MsFlags::MS_REC,
+        None::<&str>,
+    )?;
+
     // Writable /tmp
     mount_tmpfs("/tmp", &args.tmpfs_size)?;
 
