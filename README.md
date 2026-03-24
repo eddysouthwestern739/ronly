@@ -20,7 +20,8 @@ isolation layers:
    the agent's namespace.
 
 3. **seccomp-bpf** — Blocks `kill`, `unlink`, `rename`, `truncate`,
-   `mount`, `reboot`, `ptrace` at the syscall level. Defense in depth.
+   `mount`, `reboot` at the syscall level. `ptrace` write ops blocked
+   but read ops allowed (so `strace` works). Defense in depth.
 
 4. **Tool shims** — Wrapper scripts on PATH that enforce read-only
    semantics for tools with their own read/write APIs (Docker socket,
@@ -42,7 +43,8 @@ rosshd \
   --port 2222 \
   --host-key /etc/rosshd/host_key \
   --authorized-keys /etc/rosshd/authorized_keys \
-  --tmpfs-size-mb 64
+  --tmpfs-size-mb 64 \
+  --shims /etc/rosshd/shims
 ```
 
 Host key is auto-generated if missing. Auth is SSH public keys only
@@ -81,6 +83,19 @@ rosshd: kubectl delete is blocked (read-only session)
   `config view`, `auth can-i`
 
 Everything else is blocked by default.
+
+## Custom shims
+
+Add your own shims for tools specific to your environment:
+
+```
+rosshd --shims /etc/rosshd/shims
+```
+
+Place executable scripts in the directory. They shadow real binaries
+on PATH. Custom shims take priority over built-in shims. Follow the
+same pattern: check the subcommand, exec the real binary if allowed,
+print an error and exit 1 if blocked.
 
 ## License
 

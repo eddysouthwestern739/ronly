@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
 use std::os::fd::OwnedFd;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -20,7 +21,8 @@ use crate::Args;
 
 struct SshroServer {
     authorized_keys: Arc<Vec<PublicKey>>,
-    args: Args,
+    tmpfs_size_mb: u64,
+    extra_shim_dirs: Arc<Vec<PathBuf>>,
 }
 
 impl Server for SshroServer {
@@ -40,7 +42,8 @@ impl Server for SshroServer {
             user: String::new(),
             addr,
             authorized_keys: self.authorized_keys.clone(),
-            tmpfs_size_mb: self.args.tmpfs_size_mb,
+            tmpfs_size_mb: self.tmpfs_size_mb,
+            extra_shim_dirs: self.extra_shim_dirs.clone(),
         }
     }
 
@@ -58,6 +61,7 @@ struct SshroHandler {
     addr: Option<SocketAddr>,
     authorized_keys: Arc<Vec<PublicKey>>,
     tmpfs_size_mb: u64,
+    extra_shim_dirs: Arc<Vec<PathBuf>>,
 }
 
 impl Handler for SshroHandler {
@@ -108,6 +112,8 @@ impl Handler for SshroHandler {
         let user = self.user.clone();
         let addr = self.addr;
         let tmpfs_size_mb = self.tmpfs_size_mb;
+        let extra_shim_dirs =
+            self.extra_shim_dirs.clone();
 
         tokio::spawn(async move {
             if let Err(e) = handle_channel(
@@ -116,6 +122,7 @@ impl Handler for SshroHandler {
                 user.clone(),
                 addr,
                 tmpfs_size_mb,
+                extra_shim_dirs,
             )
             .await
             {
@@ -136,6 +143,7 @@ async fn handle_channel(
     user: String,
     addr: Option<SocketAddr>,
     tmpfs_size_mb: u64,
+    extra_shim_dirs: Arc<Vec<PathBuf>>,
 ) -> Result<()> {
     use tokio::io::unix::AsyncFd;
 
@@ -162,6 +170,7 @@ async fn handle_channel(
                     crate::sandbox::spawn_exec(
                         tmpfs_size_mb,
                         &cmd,
+                        &extra_shim_dirs,
                     )?;
                 set_nonblocking(&stdout_fd);
                 relay_pipe(
@@ -190,6 +199,7 @@ async fn handle_channel(
                     crate::sandbox::spawn_shell(
                         tmpfs_size_mb,
                         None,
+                        &extra_shim_dirs,
                     )?;
                 set_nonblocking(&master);
                 let afd = AsyncFd::new(master)?;
@@ -406,6 +416,8 @@ fn load_authorized_keys(
 }
 
 pub async fn run(args: Args) -> Result<()> {
+    crate::audit::init(args.log.as_deref());
+
     if !args.host_key.exists() {
         info!(
             "generating host key at {}",
@@ -443,9 +455,12 @@ pub async fn run(args: Args) -> Result<()> {
     };
 
     let port = args.port;
+    let extra_shim_dirs =
+        Arc::new(args.shims.clone());
     let mut server = SshroServer {
         authorized_keys: Arc::new(authorized_keys),
-        args,
+        tmpfs_size_mb: args.tmpfs_size_mb,
+        extra_shim_dirs,
     };
 
     info!("rosshd listening on 0.0.0.0:{}", port);

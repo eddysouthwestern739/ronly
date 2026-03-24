@@ -8,7 +8,10 @@ mod server;
 mod shims;
 
 #[derive(Parser, Clone)]
-#[command(name = "rosshd", about = "Read-only SSH server")]
+#[command(
+    name = "rosshd",
+    about = "Read-only SSH server"
+)]
 pub struct Args {
     /// Port to listen on
     #[arg(long, default_value = "2222")]
@@ -29,6 +32,10 @@ pub struct Args {
     /// Log file path (stdout if not set)
     #[arg(long)]
     pub log: Option<PathBuf>,
+
+    /// Additional shim directories (prepended to PATH)
+    #[arg(long)]
+    pub shims: Vec<PathBuf>,
 }
 
 #[tokio::main]

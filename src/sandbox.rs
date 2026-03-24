@@ -10,6 +10,7 @@ pub use linux::spawn_shell;
 pub fn spawn_shell(
     _tmpfs_size_mb: u64,
     _cmd: Option<&str>,
+    _extra_shim_dirs: &[std::path::PathBuf],
 ) -> anyhow::Result<(u32, std::os::unix::io::OwnedFd)> {
     anyhow::bail!("rosshd only runs on Linux")
 }
@@ -18,6 +19,7 @@ pub fn spawn_shell(
 pub fn spawn_exec(
     _tmpfs_size_mb: u64,
     _cmd: &str,
+    _extra_shim_dirs: &[std::path::PathBuf],
 ) -> anyhow::Result<(
     u32,
     std::os::unix::io::OwnedFd,

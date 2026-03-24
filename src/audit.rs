@@ -1,13 +1,35 @@
 use chrono::Utc;
 use serde::Serialize;
+use std::io::Write;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
+static LOG_FILE: OnceLock<Option<Mutex<std::fs::File>>> =
+    OnceLock::new();
+
+/// Initialize audit logging. Call once at startup.
+/// If path is Some, logs go to the file. Otherwise stdout.
+pub fn init(path: Option<&Path>) {
+    LOG_FILE.get_or_init(|| {
+        path.and_then(|p| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+                .ok()
+                .map(Mutex::new)
+        })
+    });
+}
 
 pub fn new_session_id() -> String {
-    let n = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let n =
+        SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("{:08x}", n)
 }
 
@@ -46,8 +68,18 @@ impl AuditEntry {
             result: result.to_string(),
             reason: reason.map(|s| s.to_string()),
         };
-        if let Ok(json) = serde_json::to_string(&entry) {
-            println!("{}", json);
+        let Ok(json) = serde_json::to_string(&entry)
+        else {
+            return;
+        };
+        match LOG_FILE.get() {
+            Some(Some(f)) => {
+                if let Ok(mut f) = f.lock() {
+                    let _ =
+                        writeln!(f, "{}", json);
+                }
+            }
+            _ => println!("{}", json),
         }
     }
 }

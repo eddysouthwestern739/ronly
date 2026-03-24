@@ -35,6 +35,7 @@ RUST_LOG=warn "$BINARY" \
   --host-key "$TMPDIR/host_key" \
   --authorized-keys "$TMPDIR/authorized_keys" \
   --tmpfs-size-mb 16 \
+  --log "$TMPDIR/audit.json" \
   >"$TMPDIR/rosshd.log" 2>&1 &
 SSHRO_PID=$!
 
@@ -137,6 +138,16 @@ echo "--- exit codes ---"
 run_test "exit 0" 0 "true"
 run_test "exit 1" 1 "false"
 run_test "exit 42" 42 "exit 42"
+
+echo "--- audit log ---"
+if [ -f "$TMPDIR/audit.json" ] && \
+   grep -q '"event":"command"' "$TMPDIR/audit.json"; then
+  echo "  ok  audit log written to file"
+  PASS=$((PASS + 1))
+else
+  echo "FAIL  audit log not written"
+  FAIL=$((FAIL + 1))
+fi
 
 echo ""
 echo "$PASS passed, $FAIL failed"

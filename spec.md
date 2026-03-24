@@ -323,7 +323,7 @@ An agent can SSH into a production machine via rosshd and perform a full diagnos
 - Host key auto-generation via ssh-keygen
 - Exec mode uses pipes (clean output), shell mode uses PTY
 - CLI: `--port`, `--host-key`, `--authorized-keys`,
-  `--tmpfs-size-mb`, `--log`
+  `--tmpfs-size-mb`, `--log`, `--shims`
 - 17 integration tests (`tests/integration.sh`), all passing
 - GitHub Actions CI (`.github/workflows/test.yml`)
 - `make test-lima` for local testing via lima VM
@@ -353,19 +353,9 @@ namespace is the enforcement mechanism.
 
 #### Phase 2: Usability
 
-5. **Config file.** `/etc/rosshd/config.toml` with TOML parsing.
-   CLI flags override config. Add `[filesystem].writable_paths`
-   for additional tmpfs overlays.
-
-6. **Custom shim directories.** `--shims /etc/rosshd/shims`
-   flag. Prepend custom shims to PATH before built-in shims.
-
-7. **systemctl shim.** Allow status/list-units/list-unit-files/
-   show/is-active/is-enabled/is-failed/cat. Block everything
-   else.
-
-8. **Audit log improvements.** Log to file (not just stdout).
-   Track shim block events. Include exit codes in audit entries.
+5. ~~Custom shim directories~~ — done, `--shims` flag
+6. ~~Audit log to file~~ — done, `--log` flag writes JSON
+   audit entries to a file instead of stdout
 
 #### Phase 3: Network & Database (v2)
 

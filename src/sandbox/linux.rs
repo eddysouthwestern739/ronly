@@ -155,7 +155,10 @@ fn die(msg: &str) -> ! {
 /// Host /proc remains mounted read-only so ps/top show real
 /// processes. kill fails because target PIDs don't exist in
 /// the agent's PID namespace (seccomp also blocks as backup).
-fn sandbox_or_die(tmpfs_size_mb: u64) {
+fn sandbox_or_die(
+    tmpfs_size_mb: u64,
+    extra_shim_dirs: &[std::path::PathBuf],
+) {
     // Unshare mount + PID namespace
     if let Err(e) = nix::sched::unshare(
         CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID,
@@ -170,12 +173,16 @@ fn sandbox_or_die(tmpfs_size_mb: u64) {
     if let Err(e) = shims::install_shims() {
         die(&format!("rosshd: shims: {}", e));
     }
-    let path =
+    // Build PATH: extra shims > built-in shims > system
+    let sys_path =
         std::env::var("PATH").unwrap_or_default();
-    std::env::set_var(
-        "PATH",
-        format!("{}:{}", shims::SHIMS_DIR, path),
-    );
+    let mut path_parts: Vec<String> = extra_shim_dirs
+        .iter()
+        .map(|d| d.to_string_lossy().into_owned())
+        .collect();
+    path_parts.push(shims::SHIMS_DIR.to_string());
+    path_parts.push(sys_path);
+    std::env::set_var("PATH", path_parts.join(":"));
 
     // Double-fork for PID namespace.
     // Child B becomes PID 1 in the new namespace.
@@ -219,8 +226,9 @@ fn sandbox_or_die(tmpfs_size_mb: u64) {
 fn child_setup_and_exec(
     tmpfs_size_mb: u64,
     cmd: Option<&str>,
+    extra_shim_dirs: &[std::path::PathBuf],
 ) -> ! {
-    sandbox_or_die(tmpfs_size_mb);
+    sandbox_or_die(tmpfs_size_mb, extra_shim_dirs);
 
     let shell = std::env::var("SHELL")
         .unwrap_or_else(|_| "/bin/bash".to_string());
@@ -248,6 +256,7 @@ fn child_setup_and_exec(
 pub fn spawn_shell(
     tmpfs_size_mb: u64,
     cmd: Option<&str>,
+    extra_shim_dirs: &[std::path::PathBuf],
 ) -> Result<(nix::unistd::Pid, OwnedFd)> {
     use nix::pty::openpty;
     use nix::unistd::ForkResult;
@@ -281,7 +290,9 @@ pub fn spawn_shell(
             if slave_raw > 2 {
                 unsafe { libc::close(slave_raw) };
             }
-            child_setup_and_exec(tmpfs_size_mb, cmd);
+            child_setup_and_exec(
+                tmpfs_size_mb, cmd, extra_shim_dirs,
+            );
         }
     }
 }
@@ -291,6 +302,7 @@ pub fn spawn_shell(
 pub fn spawn_exec(
     tmpfs_size_mb: u64,
     cmd: &str,
+    extra_shim_dirs: &[std::path::PathBuf],
 ) -> Result<(nix::unistd::Pid, OwnedFd, OwnedFd)> {
     use nix::unistd::ForkResult;
     use std::os::fd::IntoRawFd;
@@ -331,7 +343,9 @@ pub fn spawn_exec(
                 unsafe { libc::close(stdout_w_raw) };
             }
             child_setup_and_exec(
-                tmpfs_size_mb, Some(cmd),
+                tmpfs_size_mb,
+                Some(cmd),
+                extra_shim_dirs,
             );
         }
     }
