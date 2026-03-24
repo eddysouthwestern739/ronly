@@ -1797,6 +1797,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rosshd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "env_logger",
+ "libc",
+ "log",
+ "nix",
+ "russh",
+ "seccompiler",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "rsa"
 version = "0.10.0-rc.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2184,24 +2202,6 @@ dependencies = [
  "bytes",
  "pem-rfc7468 0.7.0",
  "sha2 0.10.9",
-]
-
-[[package]]
-name = "sshro"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "env_logger",
- "libc",
- "log",
- "nix",
- "russh",
- "seccompiler",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

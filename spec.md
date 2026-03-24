@@ -1,4 +1,4 @@
-# sshro — Read-Only SSH for Production Systems
+# rosshd — Read-Only SSH for Production Systems
 
 ## Problem
 
@@ -6,7 +6,7 @@ AI agents increasingly need to interact with production systems to diagnose issu
 
 Today, teams solve this with ad-hoc approaches: LLM-based command review (slow, unreliable, expensive), manually curated command allowlists (brittle, incomplete), or just giving agents full access and hoping the prompt says "be careful." None of these are satisfactory.
 
-`sshro` is a standalone SSH server that provides **read-only access to a Linux system**. Agents (or humans) SSH in and get a shell that looks and feels completely normal — `top` works, `cat /var/log/syslog` works, `kubectl get pods` works — but any destructive operation is blocked at the kernel level. No LLM in the loop. No allowlists to maintain. The kernel just says no.
+`rosshd` is a standalone SSH server that provides **read-only access to a Linux system**. Agents (or humans) SSH in and get a shell that looks and feels completely normal — `top` works, `cat /var/log/syslog` works, `kubectl get pods` works — but any destructive operation is blocked at the kernel level. No LLM in the loop. No allowlists to maintain. The kernel just says no.
 
 ## Design Principles
 
@@ -14,13 +14,13 @@ Today, teams solve this with ad-hoc approaches: LLM-based command review (slow, 
 
 **Transparent to the user.** The agent doesn't need to know it's in a sandbox. Standard tools work. `top` shows real processes. `cat` reads real files. `kubectl` talks to the real cluster. The only observable difference is that writes fail — with a clear error message.
 
-**Single binary, zero dependencies.** `sshro` is a self-contained Rust binary. No runtime, no sidecar processes, no Go services to deploy on Kubernetes. You scp it onto a server, run it, and it works.
+**Single binary, zero dependencies.** `rosshd` is a self-contained Rust binary. No runtime, no sidecar processes, no Go services to deploy on Kubernetes. You scp it onto a server, run it, and it works.
 
 **Unopinionated about what "read-only" means for each tool.** The base layer (filesystem, processes, syscalls) is enforced by the kernel. Higher-level tools (Docker, kubectl, psql) are handled by shims that understand the tool's read/write semantics. Shims are small, auditable, and composable.
 
 ## Architecture
 
-When a client connects to `sshro`, the server authenticates via SSH keys, then forks a new session into a sandboxed environment composed of four isolation layers:
+When a client connects to `rosshd`, the server authenticates via SSH keys, then forks a new session into a sandboxed environment composed of four isolation layers:
 
 ### Layer 1: Read-Only Filesystem (Mount Namespace)
 
@@ -75,7 +75,7 @@ This prevents an agent from reading sensitive files and exfiltrating them via `c
 
 ## Tool Shims
 
-The base isolation layers handle filesystem, processes, syscalls, and network. But many tools that agents use have their own read/write semantics that don't map cleanly onto filesystem operations. `sshro` ships with **shims** — small wrapper scripts placed on the PATH that shadow real binaries and enforce read-only semantics at the application level.
+The base isolation layers handle filesystem, processes, syscalls, and network. But many tools that agents use have their own read/write semantics that don't map cleanly onto filesystem operations. `rosshd` ships with **shims** — small wrapper scripts placed on the PATH that shadow real binaries and enforce read-only semantics at the application level.
 
 ### docker
 
@@ -120,37 +120,37 @@ Each shim follows the same pattern:
 1. Parse the subcommand from the CLI arguments
 2. Check against an allowlist of read-only subcommands
 3. If allowed, exec the real binary with the original arguments
-4. If blocked, print `sshro: <tool> <subcommand> is blocked (read-only session)` and exit 1
+4. If blocked, print `rosshd: <tool> <subcommand> is blocked (read-only session)` and exit 1
 
 Shims are intentionally simple — typically 20-50 lines of shell script. They are auditable by anyone.
 
 ### Custom shims
 
-Admins can add custom shims for tools specific to their environment by placing scripts in `/etc/sshro/shims/`. These are prepended to the PATH alongside the built-in shims.
+Admins can add custom shims for tools specific to their environment by placing scripts in `/etc/rosshd/shims/`. These are prepended to the PATH alongside the built-in shims.
 
 ## Configuration
 
-`sshro` is configured via command-line flags and an optional config file. It does **not** read `sshd_config` — the standard sshd configuration model is deeply tied to OpenSSH internals (PAM, privilege separation, subsystems) that don't apply here. Sharing the config would create confusion about which options are honored.
+`rosshd` is configured via command-line flags and an optional config file. It does **not** read `sshd_config` — the standard sshd configuration model is deeply tied to OpenSSH internals (PAM, privilege separation, subsystems) that don't apply here. Sharing the config would create confusion about which options are honored.
 
 ### Command-line
 
 ```
-sshro \
+rosshd \
   --port 2222 \
-  --host-key /etc/sshro/host_key \
-  --authorized-keys /etc/sshro/authorized_keys \
+  --host-key /etc/rosshd/host_key \
+  --authorized-keys /etc/rosshd/authorized_keys \
   --allow-egress 10.0.0.0/8,172.16.0.0/12 \
   --tmpfs-size 64M \
-  --shims /etc/sshro/shims \
-  --log /var/log/sshro.log
+  --shims /etc/rosshd/shims \
+  --log /var/log/rosshd.log
 ```
 
-### Config file (/etc/sshro/config.toml)
+### Config file (/etc/rosshd/config.toml)
 
 ```toml
 port = 2222
-host_key = "/etc/sshro/host_key"
-authorized_keys = "/etc/sshro/authorized_keys"
+host_key = "/etc/rosshd/host_key"
+authorized_keys = "/etc/rosshd/authorized_keys"
 
 [network]
 allow_egress = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
@@ -163,7 +163,7 @@ writable_paths = ["/tmp"]
 [shims]
 # Built-in shims are always loaded
 # Additional shim directories:
-extra = ["/etc/sshro/shims"]
+extra = ["/etc/rosshd/shims"]
 
 [capabilities]
 # Additional Linux capabilities to grant
@@ -171,31 +171,31 @@ extra = ["/etc/sshro/shims"]
 allow = ["CAP_PERFMON"]
 
 [logging]
-file = "/var/log/sshro.log"
+file = "/var/log/rosshd.log"
 # Log all commands executed in the session
 audit_commands = true
 ```
 
 ### Auth
 
-`sshro` uses SSH public key authentication only. No passwords, no PAM, no certificates (in MVP). The `authorized_keys` file uses the same format as OpenSSH's `~/.ssh/authorized_keys`. This means existing SSH keys work with zero setup — if an agent can SSH into a machine today, it can SSH into `sshro` by adding its public key.
+`rosshd` uses SSH public key authentication only. No passwords, no PAM, no certificates (in MVP). The `authorized_keys` file uses the same format as OpenSSH's `~/.ssh/authorized_keys`. This means existing SSH keys work with zero setup — if an agent can SSH into a machine today, it can SSH into `rosshd` by adding its public key.
 
 ## Error Handling
 
-When sshro blocks an operation, the error messages are clear and machine-parseable:
+When rosshd blocks an operation, the error messages are clear and machine-parseable:
 
 ```
 $ rm /etc/hosts
-sshro: write operation blocked (read-only filesystem)
+rosshd: write operation blocked (read-only filesystem)
 
 $ kill 1234
-sshro: kill syscall blocked (read-only session)
+rosshd: kill syscall blocked (read-only session)
 
 $ docker exec -it abc123 bash
-sshro: docker exec is blocked (read-only session)
+rosshd: docker exec is blocked (read-only session)
 
 $ kubectl delete pod my-pod
-sshro: kubectl delete is blocked (read-only session)
+rosshd: kubectl delete is blocked (read-only session)
 ```
 
 All blocked operations are logged to the audit log with timestamp, session ID, user, and the full command attempted.
@@ -271,7 +271,7 @@ The MVP should be useful for Deno's own agents (Kaju, Avocet) within a week of d
 4. Remount `/` as read-only bind mount
 5. Mount tmpfs at `/tmp` (size-limited)
 6. Bind-mount host `/proc` read-only
-7. Prepend `/usr/lib/sshro/shims` to PATH
+7. Prepend `/usr/lib/rosshd/shims` to PATH
 8. Load seccomp-bpf filter
 9. Exec user's shell (from `$SHELL` or `/bin/bash`)
 
@@ -286,7 +286,7 @@ case "$1" in
     exec /usr/bin/docker "$@"
     ;;
   *)
-    echo "sshro: docker $1 is blocked (read-only session)" >&2
+    echo "rosshd: docker $1 is blocked (read-only session)" >&2
     exit 1
     ;;
 esac
@@ -295,7 +295,7 @@ esac
 ### MVP Validation
 
 Test by:
-1. Deploy sshro on a dev machine running our staging Kubernetes cluster
+1. Deploy rosshd on a dev machine running our staging Kubernetes cluster
 2. Point Kaju at it (configure as SSH endpoint for diagnostic tool calls)
 3. Verify: `top`, `ps`, `kubectl get pods`, `docker ps`, `docker logs`, `cat` log files all work
 4. Verify: `rm`, `kill`, `kubectl delete`, `docker exec`, `docker stop` all fail with clear errors
@@ -303,7 +303,7 @@ Test by:
 
 ### What Success Looks Like
 
-An agent can SSH into a production machine via sshro and perform a full diagnostic investigation — check process state, read logs, query Kubernetes, inspect Docker containers, run perf — without any possibility of modifying the system. The admin's confidence that the agent cannot cause harm is based on kernel enforcement, not on trusting the agent's prompt or an LLM-based reviewer.
+An agent can SSH into a production machine via rosshd and perform a full diagnostic investigation — check process state, read logs, query Kubernetes, inspect Docker containers, run perf — without any possibility of modifying the system. The admin's confidence that the agent cannot cause harm is based on kernel enforcement, not on trusting the agent's prompt or an LLM-based reviewer.
 
 ## Implementation Status (2026-03-23)
 
@@ -358,7 +358,7 @@ shim-level reporting or shell exit code tracking.
 
 #### Phase 1: Hardening (next)
 
-1. **Integration tests.** Spawn sshro in a test, SSH in, verify:
+1. **Integration tests.** Spawn rosshd in a test, SSH in, verify:
    - Read commands work (echo, cat, ps, ls)
    - Write ops blocked (rm, touch, kill)
    - Shims work (docker ps allowed, docker exec blocked)
@@ -384,11 +384,11 @@ shim-level reporting or shell exit code tracking.
 
 #### Phase 2: Usability
 
-5. **Config file.** `/etc/sshro/config.toml` with TOML parsing.
+5. **Config file.** `/etc/rosshd/config.toml` with TOML parsing.
    CLI flags override config. Add `[filesystem].writable_paths`
    for additional tmpfs overlays.
 
-6. **Custom shim directories.** `--shims /etc/sshro/shims`
+6. **Custom shim directories.** `--shims /etc/rosshd/shims`
    flag. Prepend custom shims to PATH before built-in shims.
 
 7. **systemctl shim.** Allow status/list-units/list-unit-files/
@@ -413,10 +413,10 @@ shim-level reporting or shell exit code tracking.
 
 ## Future Directions
 
-**As a product:** Every company deploying AI agents to production will need something like sshro. The current alternatives (full access, LLM-based review, manual allowlists) are all inadequate. A single-binary tool that provides guaranteed read-only access with zero configuration overhead could see broad adoption.
+**As a product:** Every company deploying AI agents to production will need something like rosshd. The current alternatives (full access, LLM-based review, manual allowlists) are all inadequate. A single-binary tool that provides guaranteed read-only access with zero configuration overhead could see broad adoption.
 
 **Expanded protocol support:** The shim model extends naturally to any CLI tool with read/write subcommands. Community-contributed shims for cloud CLIs (aws, gcloud, az), database clients, monitoring tools, etc.
 
-**Agent-aware features:** Session sharing (multiple agents investigating the same incident can share a session), automatic context extraction (sshro observes what the agent reads and builds a summary), integration with agent frameworks for structured tool-call results.
+**Agent-aware features:** Session sharing (multiple agents investigating the same incident can share a session), automatic context extraction (rosshd observes what the agent reads and builds a summary), integration with agent frameworks for structured tool-call results.
 
-**Managed service:** A hosted version where you connect your infrastructure and get sshro endpoints without deploying anything. This would pair naturally with Deno Deploy as the hosting layer.
+**Managed service:** A hosted version where you connect your infrastructure and get rosshd endpoints without deploying anything. This would pair naturally with Deno Deploy as the hosting layer.

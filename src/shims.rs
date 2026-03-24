@@ -21,11 +21,11 @@ case "$1" in
     esac
     ;;
   *)
-    echo "sshro: docker $1 is blocked (read-only session)" >&2
+    echo "rosshd: docker $1 is blocked (read-only session)" >&2
     exit 1
     ;;
 esac
-echo "sshro: docker $* is blocked (read-only session)" >&2
+echo "rosshd: docker $* is blocked (read-only session)" >&2
 exit 1
 "#;
 
@@ -49,15 +49,15 @@ case "$1" in
     esac
     ;;
   *)
-    echo "sshro: kubectl $1 is blocked (read-only session)" >&2
+    echo "rosshd: kubectl $1 is blocked (read-only session)" >&2
     exit 1
     ;;
 esac
-echo "sshro: kubectl $* is blocked (read-only session)" >&2
+echo "rosshd: kubectl $* is blocked (read-only session)" >&2
 exit 1
 "#;
 
-pub const SHIMS_DIR: &str = "/usr/lib/sshro/shims";
+pub const SHIMS_DIR: &str = "/usr/lib/rosshd/shims";
 
 /// Write shim scripts to the shims directory.
 /// Called during server startup.

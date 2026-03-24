@@ -118,13 +118,13 @@ fn die(msg: &str) -> ! {
 
 fn sandbox_or_die(tmpfs_size_mb: u64) {
     if let Err(e) = setup_namespaces() {
-        die(&format!("sshro: namespace: {}", e));
+        die(&format!("rosshd: namespace: {}", e));
     }
     if let Err(e) = setup_mounts(tmpfs_size_mb) {
-        die(&format!("sshro: mounts: {}", e));
+        die(&format!("rosshd: mounts: {}", e));
     }
     if let Err(e) = shims::install_shims() {
-        die(&format!("sshro: shims: {}", e));
+        die(&format!("rosshd: shims: {}", e));
     }
     let path =
         std::env::var("PATH").unwrap_or_default();
@@ -133,7 +133,7 @@ fn sandbox_or_die(tmpfs_size_mb: u64) {
         format!("{}:{}", shims::SHIMS_DIR, path),
     );
     if let Err(e) = setup_seccomp() {
-        die(&format!("sshro: seccomp: {}", e));
+        die(&format!("rosshd: seccomp: {}", e));
     }
 }
 

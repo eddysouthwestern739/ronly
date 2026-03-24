@@ -448,7 +448,7 @@ pub async fn run(args: Args) -> Result<()> {
         args,
     };
 
-    info!("sshro listening on 0.0.0.0:{}", port);
+    info!("rosshd listening on 0.0.0.0:{}", port);
     server
         .run_on_address(
             Arc::new(config),

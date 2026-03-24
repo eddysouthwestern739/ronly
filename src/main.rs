@@ -8,18 +8,18 @@ mod server;
 mod shims;
 
 #[derive(Parser, Clone)]
-#[command(name = "sshro", about = "Read-only SSH server")]
+#[command(name = "rosshd", about = "Read-only SSH server")]
 pub struct Args {
     /// Port to listen on
     #[arg(long, default_value = "2222")]
     pub port: u16,
 
     /// Path to host key (generated if missing)
-    #[arg(long, default_value = "/etc/sshro/host_key")]
+    #[arg(long, default_value = "/etc/rosshd/host_key")]
     pub host_key: PathBuf,
 
     /// Path to authorized_keys file
-    #[arg(long, default_value = "/etc/sshro/authorized_keys")]
+    #[arg(long, default_value = "/etc/rosshd/authorized_keys")]
     pub authorized_keys: PathBuf,
 
     /// tmpfs size in MB for /tmp

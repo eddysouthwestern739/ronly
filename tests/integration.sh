@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Integration tests for sshro.
+# Integration tests for rosshd.
 # Must run as root (needs CAP_SYS_ADMIN for namespaces).
 # Usage: sudo ./tests/integration.sh
 
@@ -23,19 +23,19 @@ cp "$TMPDIR/client_key.pub" "$TMPDIR/authorized_keys"
 PORT=$(python3 -c \
   'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
 
-BINARY="${SSHRO_BIN:-./target/release/sshro}"
+BINARY="${ROSSHD_BIN:-./target/release/rosshd}"
 if [ ! -x "$BINARY" ]; then
   echo "error: $BINARY not found. Run cargo build --release first." >&2
   exit 1
 fi
 
-# Start sshro
+# Start rosshd
 RUST_LOG=warn "$BINARY" \
   --port "$PORT" \
   --host-key "$TMPDIR/host_key" \
   --authorized-keys "$TMPDIR/authorized_keys" \
   --tmpfs-size-mb 16 \
-  >"$TMPDIR/sshro.log" 2>&1 &
+  >"$TMPDIR/rosshd.log" 2>&1 &
 SSHRO_PID=$!
 
 # Wait for server
@@ -104,12 +104,12 @@ echo "--- write operations blocked ---"
 run_test "rm blocked" 1 "rm /etc/hostname 2>&1"
 run_test_grep "rm error" 1 \
   "read-only\|not permitted" "rm /etc/hostname 2>&1"
-run_test "touch blocked" 1 "touch /etc/sshro_test 2>&1"
-run_test "mkdir blocked" 1 "mkdir /etc/sshro_test 2>&1"
+run_test "touch blocked" 1 "touch /etc/rosshd_test 2>&1"
+run_test "mkdir blocked" 1 "mkdir /etc/rosshd_test 2>&1"
 
 echo "--- /tmp writable ---"
 run_test "/tmp write+read" 0 \
-  "echo test > /tmp/sshro_test && cat /tmp/sshro_test"
+  "echo test > /tmp/rosshd_test && cat /tmp/rosshd_test"
 
 echo "--- seccomp ---"
 run_test_grep "kill blocked" 1 \
@@ -136,6 +136,6 @@ echo "$PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then
   echo ""
   echo "--- server log ---"
-  cat "$TMPDIR/sshro.log"
+  cat "$TMPDIR/rosshd.log"
   exit 1
 fi
