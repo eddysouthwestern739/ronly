@@ -5,9 +5,7 @@ fn ronly() -> Command {
     let mut cmd = Command::new(bin);
     // RONLY_TEST_MODE=privileged forces --privileged flag
     // so CI can test both paths
-    if std::env::var("RONLY_TEST_MODE").as_deref()
-        == Ok("privileged")
-    {
+    if std::env::var("RONLY_TEST_MODE").as_deref() == Ok("privileged") {
         cmd.arg("--privileged");
     }
     cmd
@@ -75,8 +73,7 @@ fn rm_blocked() {
     assert!(!out.status.success());
     let text = combined(&out).to_lowercase();
     assert!(
-        text.contains("read-only")
-            || text.contains("not permitted"),
+        text.contains("read-only") || text.contains("not permitted"),
         "{}",
         text
     );
@@ -98,9 +95,7 @@ fn mkdir_blocked() {
 
 #[test]
 fn tmp_writable() {
-    let out = ronly_sh(
-        "echo test > /tmp/ronly_test && cat /tmp/ronly_test",
-    );
+    let out = ronly_sh("echo test > /tmp/ronly_test && cat /tmp/ronly_test");
     assert!(out.status.success(), "{}", combined(&out));
     assert!(stdout(&out).contains("test"));
 }
@@ -119,9 +114,7 @@ fn ps_works() {
 fn kill_blocked() {
     let out = ronly_sh("kill 1 2>&1");
     assert!(!out.status.success());
-    assert!(combined(&out)
-        .to_lowercase()
-        .contains("not permitted"));
+    assert!(combined(&out).to_lowercase().contains("not permitted"));
 }
 
 // --- shims ---
@@ -152,6 +145,48 @@ fn kubectl_apply_blocked() {
     let out = ronly_sh("kubectl apply -f foo 2>&1");
     assert!(!out.status.success());
     assert!(combined(&out).contains("blocked"));
+}
+
+// --- no-network ---
+
+#[test]
+fn no_network_has_no_interfaces() {
+    // An empty network namespace only has a loopback device,
+    // and it starts DOWN. No eth0, no external connectivity.
+    let out = ronly()
+        .args(["--no-network", "--"])
+        .args(["cat", "/proc/net/dev"])
+        .output()
+        .expect("failed to run ronly");
+    assert!(out.status.success(), "{}", combined(&out));
+    let text = stdout(&out);
+    let interfaces: Vec<&str> = text
+        .lines()
+        .skip(2) // skip header lines
+        .filter_map(|l| l.split(':').next())
+        .map(|s| s.trim())
+        .collect();
+    assert_eq!(
+        interfaces,
+        vec!["lo"],
+        "expected only loopback, got: {:?}",
+        interfaces
+    );
+}
+
+#[test]
+fn no_network_local_ops_work() {
+    let out = ronly()
+        .args(["--no-network", "--"])
+        .args([
+            "bash",
+            "-c",
+            "ps aux > /tmp/diag && cat /proc/self/status >> /tmp/diag && wc -l /tmp/diag",
+        ])
+        .output()
+        .expect("failed to run ronly");
+    assert!(out.status.success(), "{}", combined(&out));
+    assert!(!stdout(&out).is_empty());
 }
 
 // --- exit codes ---

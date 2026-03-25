@@ -17,6 +17,7 @@ pub struct Args {
     pub tmpfs_size: String,
     pub extra_shims: Vec<PathBuf>,
     pub no_shims: bool,
+    pub no_network: bool,
     pub writable: Vec<PathBuf>,
     pub mode: Mode,
 }
@@ -32,6 +33,7 @@ fn parse_args() -> Args {
         tmpfs_size: "64M".into(),
         extra_shims: vec![],
         no_shims: false,
+        no_network: false,
         writable: vec![],
         mode: Mode::Auto,
     };
@@ -48,17 +50,17 @@ fn parse_args() -> Args {
                 std::process::exit(0);
             }
             Long("tmpfs-size") => {
-                args.tmpfs_size =
-                    parser.value().unwrap().into_string().unwrap();
+                args.tmpfs_size = parser.value().unwrap().into_string().unwrap();
             }
             Long("extra-shims") => {
-                args.extra_shims.push(
-                    parser.value().unwrap().into_string().unwrap()
-                        .into(),
-                );
+                args.extra_shims
+                    .push(parser.value().unwrap().into_string().unwrap().into());
             }
             Long("no-shims") => {
                 args.no_shims = true;
+            }
+            Long("no-network") => {
+                args.no_network = true;
             }
             Long("rootless") => {
                 args.mode = Mode::Rootless;
@@ -67,20 +69,14 @@ fn parse_args() -> Args {
                 args.mode = Mode::Privileged;
             }
             Long("writable") => {
-                args.writable.push(
-                    parser.value().unwrap().into_string().unwrap()
-                        .into(),
-                );
+                args.writable
+                    .push(parser.value().unwrap().into_string().unwrap().into());
             }
             Value(val) => {
-                args.command.push(
-                    val.into_string().unwrap(),
-                );
+                args.command.push(val.into_string().unwrap());
             }
             _ => {
-                eprintln!(
-                    "unknown argument, try --help"
-                );
+                eprintln!("unknown argument, try --help");
                 std::process::exit(1);
             }
         }
